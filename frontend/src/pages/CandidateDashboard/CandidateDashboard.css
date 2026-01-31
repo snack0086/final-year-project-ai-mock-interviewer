@@ -1,0 +1,138 @@
+.candidate-dashboard {
+  min-height: 100vh;
+  background: #f8f9fa;
+  width: 100%;
+}
+
+.dashboard-container {
+  width: 100%;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.dashboard-section {
+  margin-bottom: 60px;
+  margin-top: 60px;
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.section-header h2 {
+  font-size: 2rem;
+  color: #333;
+  margin: 0 0 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-weight: 700;
+}
+
+.section-header h2 i {
+  color: #667eea;
+}
+
+.section-subtitle {
+  color: #666;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.job-openings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 25px;
+  width: 100%;
+}
+
+.applied-jobs-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  width: 100%;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 5px 30px rgba(0, 0, 0, 0.08);
+}
+
+.empty-state i {
+  font-size: 4rem;
+  color: #ccc;
+  margin-bottom: 20px;
+}
+
+.empty-state p {
+  color: #999;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+/* Tablet and above - 2 cards per row */
+@media (min-width: 768px) {
+  .dashboard-container {
+    padding: 40px 30px;
+  }
+
+  .job-openings-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 25px;
+  }
+
+  .applied-jobs-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+  }
+
+  .section-header h2 {
+    font-size: 2.2rem;
+  }
+}
+
+/* Desktop - 2 cards per row with more spacing */
+@media (min-width: 1024px) {
+  .dashboard-container {
+    padding: 50px 40px;
+  }
+
+  .job-openings-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 30px;
+  }
+
+  .applied-jobs-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 25px;
+  }
+
+  .section-header h2 {
+    font-size: 2.5rem;
+  }
+}
+
+/* Large desktop - still 2 cards but with max-width for better readability */
+@media (min-width: 1400px) {
+  .dashboard-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 50px 60px;
+  }
+
+  .job-openings-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 35px;
+  }
+
+  .applied-jobs-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 30px;
+  }
+}
+

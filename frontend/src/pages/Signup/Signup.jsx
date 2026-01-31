@@ -1,0 +1,133 @@
+// import "./Signup.css";
+
+// export default function Signup() {
+//   return (
+//     <div className="auth-wrapper">
+//       <div className="form-container">
+//         <h2>
+//           <i className="fas fa-robot"></i> Create Account
+//         </h2>
+//         <form action="/signup" method="POST">
+//           <input type="text" name="name" placeholder="Full Name" required />
+//           <input type="email" name="email" placeholder="Email" required />
+//           <input
+//             type="password"
+//             name="password"
+//             placeholder="Password"
+//             minLength="6"
+//             required
+//           />
+//           <select
+//             name="role"
+//             style={{
+//               padding: "12px",
+//               border: "2px solid #e0e0e0",
+//               borderRadius: "8px",
+//               fontSize: "1rem",
+//               transition: "border-color 0.3s",
+//               fontFamily: "inherit",
+//               backgroundColor: "white",
+//               cursor: "pointer",
+//             }}
+//             onFocus={(e) => (e.target.style.borderColor = "#667eea")}
+//             onBlur={(e) => (e.target.style.borderColor = "#e0e0e0")}
+//           >
+//             <option value="user">Candidate</option>
+//             <option value="builder">Hr</option>
+//           </select>
+//           <button type="submit">
+//             <i className="fas fa-user-plus"></i> Sign Up
+//           </button>
+//         </form>
+//         <div className="login-link">
+//           Already have an account? <a href="/login">Login</a>
+//         </div>
+//       </div>
+//     </div>
+//   );
+// }
+
+import { useNavigate } from "react-router-dom";
+import { useState } from "react";
+import "./Signup.css";
+
+
+export default function Signup() {
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    role: "candidate",
+  });
+  
+  const navigate = useNavigate();
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const res = await fetch("http://localhost:5000/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+
+    const data = await res.json();
+    console.log(data);
+    if (data.success) {
+      navigate("/login");
+    }
+  };
+
+  return (
+    <div className="auth-wrapper">
+      <div className="form-container">
+        <h2>
+          <i className="fas fa-robot"></i> Create Account
+        </h2>
+
+        <form onSubmit={handleSubmit}>
+          <input
+            type="text"
+            name="name"
+            placeholder="Full Name"
+            required
+            onChange={handleChange}
+          />
+
+          <input
+            type="email"
+            name="email"
+            placeholder="Email"
+            required
+            onChange={handleChange}
+          />
+
+          <input
+            type="password"
+            name="password"
+            placeholder="Password"
+            minLength="6"
+            required
+            onChange={handleChange}
+          />
+
+          <select name="role" onChange={handleChange}>
+            <option value="candidate">Candidate</option>
+            <option value="hr">HR</option>
+          </select>
+
+          <button type="submit">
+            <i className="fas fa-user-plus"></i> Sign Up
+          </button>
+        </form>
+
+        <div className="login-link">
+          Already have an account? <a href="/login">Login</a>
+        </div>
+      </div>
+    </div>
+  );
+}

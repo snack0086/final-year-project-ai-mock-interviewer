@@ -1,0 +1,319 @@
+const InterviewEvaluation = require("../models/InterviewEvaluation");
+const Application = require("../models/Application");
+const agentService = require("../services/agentService");
+
+// @desc    Start a new interview session
+// @route   POST /api/interviews/start
+exports.startInterview = async (req, res) => {
+  try {
+    const { candidateId, jobId } = req.body;
+
+    if (!candidateId || !jobId) {
+      return res.status(400).json({
+        success: false,
+        message: "Candidate ID and Job ID are required",
+      });
+    }
+
+    const interviewId = `${candidateId}-${jobId}-${Date.now()}`;
+
+    res.status(201).json({
+      success: true,
+      message: "Interview started successfully",
+      data: {
+        interviewId,
+        candidateId,
+        jobId,
+        status: "in-progress",
+        startedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get interview details (from evaluation if exists)
+// @route   GET /api/interviews/:id
+exports.getInterview = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const evaluation = await InterviewEvaluation.findOne({
+      interviewId: id,
+    }).populate("candidate job hr");
+
+    if (!evaluation) {
+      return res.status(404).json({
+        success: false,
+        message: "Interview not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: evaluation,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    End an interview session (no-op for now)
+// @route   POST /api/interviews/:id/end
+exports.endInterview = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    res.status(200).json({
+      success: true,
+      message: "Interview ended successfully",
+      data: {
+        interviewId: id,
+        status: "completed",
+        endedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Evaluate interview (AI processing result)
+// @route   POST /api/interviews/:id/evaluate
+// @body    { candidateId, jobId, hrId, rating, summary, interpretation, shouldHire, transcript }
+exports.evaluateInterview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { candidateId, jobId, hrId, rating, summary, interpretation, shouldHire, transcript } =
+      req.body;
+
+    if (!candidateId || !jobId || !hrId) {
+      return res.status(400).json({
+        success: false,
+        message: "candidateId, jobId and hrId are required",
+      });
+    }
+
+    const evaluation = await InterviewEvaluation.findOneAndUpdate(
+      { interviewId: id },
+      {
+        interviewId: id,
+        candidate: candidateId,
+        job: jobId,
+        hr: hrId,
+        rating,
+        summary,
+        interpretation,
+        shouldHire,
+        transcript,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await Application.findOneAndUpdate(
+      { candidate: candidateId, job: jobId },
+      {
+        rating,
+        summary,
+        interpretation,
+        shouldHire,
+        interviewEvaluation: evaluation._id,
+        status: "reviewed",
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Interview evaluated successfully",
+      data: evaluation,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get all interviews for a candidate
+// @route   GET /api/interviews/candidate/:candidateId
+exports.getCandidateInterviews = async (req, res) => {
+  try {
+    const { candidateId } = req.params;
+
+    const evaluations = await InterviewEvaluation.find({
+      candidate: candidateId,
+    })
+      .populate("job hr")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: evaluations.length,
+      data: evaluations,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Extract resume context using AI agent
+// @route   POST /api/interviews/extract-resume
+exports.extractResume = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "Resume file is required",
+      });
+    }
+
+    const result = await agentService.extractResumeContext(
+      req.file.buffer,
+      req.file.originalname
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to extract resume",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Generate interview questions using AI agent
+// @route   POST /api/interviews/generate-questions
+exports.generateQuestions = async (req, res) => {
+  try {
+    const { resumeContext, role } = req.body;
+
+    if (!resumeContext || !role) {
+      return res.status(400).json({
+        success: false,
+        message: "Resume context and role are required",
+      });
+    }
+
+    const result = await agentService.generateQuestions(resumeContext, role);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate questions",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Evaluate answer using AI agent
+// @route   POST /api/interviews/evaluate-answer
+exports.evaluateAnswerAPI = async (req, res) => {
+  try {
+    const { question, answer, resumeContext } = req.body;
+
+    if (!question || !answer || !resumeContext) {
+      return res.status(400).json({
+        success: false,
+        message: "Question, answer, and resume context are required",
+      });
+    }
+
+    const result = await agentService.evaluateAnswer(
+      question,
+      answer,
+      resumeContext
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to evaluate answer",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get final verdict using AI agent
+// @route   POST /api/interviews/final-verdict
+exports.getFinalVerdict = async (req, res) => {
+  try {
+    const { resumeContext, qaPairs, role } = req.body;
+
+    if (!resumeContext || !qaPairs || !role) {
+      return res.status(400).json({
+        success: false,
+        message: "Resume context, Q&A pairs, and role are required",
+      });
+    }
+
+    const result = await agentService.getFinalVerdict(
+      resumeContext,
+      qaPairs,
+      role
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to get final verdict",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Check AI agent health
+// @route   GET /api/interviews/agent-health
+exports.checkAgentHealth = async (req, res) => {
+  try {
+    const isHealthy = await agentService.healthCheck();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        agentStatus: isHealthy ? "healthy" : "unhealthy",
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to check agent health",
+      error: error.message,
+    });
+  }
+};
+

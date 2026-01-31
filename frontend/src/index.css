@@ -1,0 +1,28 @@
+/* src/index.css */
+
+/* 1. Ensure the browser knows the page is at least full height */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  /* Prevent horizontal scrolling caused by any overflowing child */
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* 2. Ensure the React Root container takes up that full space */
+#root {
+  min-height: 100vh; /* Minimum height of the viewport */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* 3. OPTIONAL: If your Navbar is fixed, add padding to the top of your pages */
+/* Adjust '80px' to match the actual height of your Navbar */
+main,
+.page-content {
+  padding-top: 80px;
+}
