@@ -1,6 +1,9 @@
 const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
+const helmet = require("helmet");
+const mongoSanitize = require("express-mongo-sanitize");
+const rateLimit = require("express-rate-limit");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -12,38 +15,126 @@ const hrRoutes = require("./routes/hrRoutes");
 // Initialize Express app
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(morgan("dev"));
+// ─── Security Headers (helmet) ───────────────────────────────────────────────
+app.use(helmet());
 
-// Health check route
+// ─── CORS ────────────────────────────────────────────────────────────────────
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
+  : ["http://localhost:5173", "http://localhost:3000"];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS policy: origin ${origin} not allowed`));
+    },
+    credentials: true,
+  })
+);
+
+// ─── Body Parsers ─────────────────────────────────────────────────────────────
+app.use(express.json({ limit: "10kb" }));
+app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+
+// ─── MongoDB Injection Sanitizer ─────────────────────────────────────────────
+app.use(mongoSanitize());
+
+// ─── HTTP Request Logger (dev only) ──────────────────────────────────────────
+if (process.env.NODE_ENV !== "production") {
+  app.use(morgan("dev"));
+}
+
+// ─── Rate Limiters ───────────────────────────────────────────────────────────
+// Strict limiter for auth endpoints (login / register)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  message: {
+    success: false,
+    message: "Too many requests from this IP, please try again after 15 minutes.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// General API limiter
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: {
+    success: false,
+    message: "Too many requests from this IP, please try again after 15 minutes.",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use("/api/auth", authLimiter);
+app.use("/api/", apiLimiter);
+
+// ─── Health Check Route ───────────────────────────────────────────────────────
 app.get("/", (req, res) => {
   res.json({
     message: "AI Interviewer API is running",
     version: "1.0.0",
+    environment: process.env.NODE_ENV || "development",
   });
 });
 
-// API Routes
+// ─── API Routes ───────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/candidates", candidateRoutes);
 app.use("/api/jobs", jobRoutes);
 app.use("/api/interviews", interviewRoutes);
 app.use("/api/hr", hrRoutes);
 
-// 404 handler
+// ─── 404 Handler ─────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: "Route not found",
+    message: `Route ${req.originalUrl} not found`,
   });
 });
 
-// Error handling middleware
+// ─── Global Error Handler ─────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error(`[ERROR] ${err.message}`);
+  if (process.env.NODE_ENV === "development") {
+    console.error(err.stack);
+  }
+
+  // Handle CORS errors
+  if (err.message && err.message.startsWith("CORS policy")) {
+    return res.status(403).json({ success: false, message: err.message });
+  }
+
+  // Handle Mongoose validation errors
+  if (err.name === "ValidationError") {
+    const messages = Object.values(err.errors).map((e) => e.message);
+    return res.status(400).json({ success: false, message: messages.join(", ") });
+  }
+
+  // Handle Mongoose duplicate key errors
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyValue)[0];
+    return res.status(400).json({
+      success: false,
+      message: `${field} already exists`,
+    });
+  }
+
+  // Handle JWT errors
+  if (err.name === "JsonWebTokenError") {
+    return res.status(401).json({ success: false, message: "Invalid token" });
+  }
+  if (err.name === "TokenExpiredError") {
+    return res.status(401).json({ success: false, message: "Token expired, please login again" });
+  }
+
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Internal Server Error",
@@ -52,12 +143,3 @@ app.use((err, req, res, next) => {
 });
 
 module.exports = app;
-
-
-
-
-
-
-
-
-

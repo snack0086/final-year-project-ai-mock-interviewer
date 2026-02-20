@@ -97,11 +97,10 @@ class AgentService {
    * @param {String} role - Job role
    * @returns {Promise<Object>} Final verdict with score and recommendation
    */
-  async getFinalVerdict(resumeContext, qaPairs, role) {
+  async getFinalVerdict(sessionContext, role) {
     try {
       const response = await this.client.post("/verdict", {
-        resume_context: resumeContext,
-        qa_pairs: qaPairs,
+        session_context: sessionContext,
         role: role,
       });
 

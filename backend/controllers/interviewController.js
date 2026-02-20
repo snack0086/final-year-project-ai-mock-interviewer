@@ -1,6 +1,8 @@
 const InterviewEvaluation = require("../models/InterviewEvaluation");
 const Application = require("../models/Application");
 const agentService = require("../services/agentService");
+const axios = require("axios");
+const path = require("path");
 
 // @desc    Start a new interview session
 // @route   POST /api/interviews/start
@@ -175,6 +177,53 @@ exports.getCandidateInterviews = async (req, res) => {
   }
 };
 
+// @desc    Extract resume context from a Cloudinary/remote URL
+// @route   POST /api/interviews/extract-resume-url
+exports.extractResumeFromUrl = async (req, res) => {
+  try {
+    const { resumeUrl } = req.body;
+
+    if (!resumeUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "resumeUrl is required",
+      });
+    }
+
+    // Download the file buffer from the remote URL
+    const fileResponse = await axios.get(resumeUrl, {
+      responseType: "arraybuffer",
+      timeout: 20000,
+    });
+
+    const buffer = Buffer.from(fileResponse.data);
+
+    // Derive a filename from the URL (default to resume.pdf)
+    let filename = "resume.pdf";
+    try {
+      const urlPath = new URL(resumeUrl).pathname;
+      const base = path.basename(urlPath);
+      if (base && (base.endsWith(".pdf") || base.endsWith(".docx"))) {
+        filename = base;
+      }
+    } catch (_) {}
+
+    const result = await agentService.extractResumeContext(buffer, filename);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("extractResumeFromUrl error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to extract resume from URL",
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Extract resume context using AI agent
 // @route   POST /api/interviews/extract-resume
 exports.extractResume = async (req, res) => {
@@ -268,20 +317,16 @@ exports.evaluateAnswerAPI = async (req, res) => {
 // @route   POST /api/interviews/final-verdict
 exports.getFinalVerdict = async (req, res) => {
   try {
-    const { resumeContext, qaPairs, role } = req.body;
+    const { sessionContext, role } = req.body;
 
-    if (!resumeContext || !qaPairs || !role) {
+    if (!sessionContext || !role) {
       return res.status(400).json({
         success: false,
-        message: "Resume context, Q&A pairs, and role are required",
+        message: "sessionContext and role are required",
       });
     }
 
-    const result = await agentService.getFinalVerdict(
-      resumeContext,
-      qaPairs,
-      role
-    );
+    const result = await agentService.getFinalVerdict(sessionContext, role);
 
     res.status(200).json({
       success: true,

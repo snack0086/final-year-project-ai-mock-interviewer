@@ -34,6 +34,11 @@ router.put(
 // @access  Private (HR)
 router.post("/jobs", protect, isHR, hrController.createJob);
 
+// @route   DELETE /api/hr/jobs/:jobId
+// @desc    Delete a job
+// @access  Private (HR)
+router.delete("/jobs/:jobId", protect, isHR, hrController.deleteJob);
+
 module.exports = router;
 
 

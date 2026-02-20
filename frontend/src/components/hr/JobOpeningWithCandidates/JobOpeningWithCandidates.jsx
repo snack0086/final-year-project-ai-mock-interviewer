@@ -5,9 +5,16 @@ export default function JobOpeningWithCandidates({
   jobOpening,
   candidates,
   onViewCandidate,
+  onDeleteJob,
 }) {
   // Sort candidates by rating in ascending order
   const sortedCandidates = [...candidates].sort((a, b) => a.rating - b.rating);
+
+  const handleDelete = () => {
+    if (window.confirm(`Are you sure you want to delete "${jobOpening.title}"? This will also remove all applications for this job.`)) {
+      onDeleteJob(jobOpening._id || jobOpening.id);
+    }
+  };
 
   return (
     <div className="job-opening-with-candidates">
@@ -32,6 +39,29 @@ export default function JobOpeningWithCandidates({
             </span>
           </div>
         </div>
+        <button
+          onClick={handleDelete}
+          title="Delete this job"
+          style={{
+            marginLeft: "auto",
+            background: "rgba(239,68,68,0.15)",
+            color: "#ef4444",
+            border: "1.5px solid #ef4444",
+            borderRadius: "8px",
+            padding: "0.5rem 1.1rem",
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: "0.9rem",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.4rem",
+            transition: "background 0.2s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = "rgba(239,68,68,0.3)"}
+          onMouseLeave={e => e.currentTarget.style.background = "rgba(239,68,68,0.15)"}
+        >
+          <i className="fas fa-trash-alt"></i> Delete Job
+        </button>
       </div>
 
       <div className="candidates-section">

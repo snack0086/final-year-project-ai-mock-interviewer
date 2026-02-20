@@ -3,301 +3,345 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import "./InterviewScreen.css";
 import API from "../../config";
 
+// ─── Status constants ────────────────────────────────────────────────────────
+const STATUS = {
+  LOADING: "loading",
+  COUNTDOWN: "countdown",
+  IN_PROGRESS: "in-progress",
+  EVALUATING: "evaluating",
+  COMPLETED: "completed",
+};
+
 export default function InterviewScreen() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const applicationId = searchParams.get("applicationId");
   const jobId = searchParams.get("jobId");
 
+  // ── UI state ────────────────────────────────────────────────────────────────
+  const [status, setStatus] = useState(STATUS.LOADING);
+  const [loadingMessage, setLoadingMessage] = useState("Loading interview...");
+  const [countdown, setCountdown] = useState(null);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isAudioOn, setIsAudioOn] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [interviewTime, setInterviewTime] = useState(0);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  const [countdown, setCountdown] = useState(null);
-  const [currentQuestion, setCurrentQuestion] = useState(null);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [totalQuestions, setTotalQuestions] = useState(5);
-  const [sessionId, setSessionId] = useState(null);
-  const [interviewStatus, setInterviewStatus] = useState("pending"); // pending, countdown, in-progress, completed
   const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // ── Interview data ──────────────────────────────────────────────────────────
   const [questions, setQuestions] = useState([]);
-  const [answers, setAnswers] = useState([]);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [currentQuestion, setCurrentQuestion] = useState(null);
   const [currentTranscript, setCurrentTranscript] = useState("");
+  const [qaPairs, setQaPairs] = useState([]);          // [{question, answer, evaluation}]
+  const [finalVerdict, setFinalVerdict] = useState(null);
 
+  // ── Session meta (fetched on load) ──────────────────────────────────────────
+  const [interviewId, setInterviewId] = useState(null);
+  const [resumeContext, setResumeContext] = useState("");
+  const [jobRole, setJobRole] = useState("");
+  const [appMeta, setAppMeta] = useState(null);        // { candidateId, hrId }
+
+  // ── Refs ────────────────────────────────────────────────────────────────────
   const candidateVideoRef = useRef(null);
-  const aiVideoRef = useRef(null);
-  const recognitionRef = useRef(null);
   const streamRef = useRef(null);
-  const userInteractedRef = useRef(false);
+  const recognitionRef = useRef(null);
+  // Keep latest mutable values accessible inside callbacks without stale closures
+  const qaPairsRef = useRef([]);
+  const questionIndexRef = useRef(0);
+  const questionsRef = useRef([]);
+  const resumeContextRef = useRef("");
+  const statusRef = useRef(STATUS.LOADING);
 
-  // Initialize interview
+  // ── Keep refs in sync ───────────────────────────────────────────────────────
+  useEffect(() => { qaPairsRef.current = qaPairs; }, [qaPairs]);
+  useEffect(() => { questionIndexRef.current = questionIndex; }, [questionIndex]);
+  useEffect(() => { questionsRef.current = questions; }, [questions]);
+  useEffect(() => { resumeContextRef.current = resumeContext; }, [resumeContext]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+
+  // ── Bootstrap the interview ─────────────────────────────────────────────────
   useEffect(() => {
     if (!applicationId || !jobId) {
-      alert("Missing interview parameters. Redirecting to dashboard.");
+      alert("Missing interview parameters. Redirecting...");
       navigate("/candidates/dashboard");
       return;
     }
-
-    fetchInterviewData();
-
+    initInterview();
     return () => {
       stopListening();
       stopCamera();
+      window.speechSynthesis?.cancel();
     };
-  }, [applicationId, jobId, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applicationId, jobId]);
 
-  // Fetch interview data and start interview
-  const fetchInterviewData = async () => {
+  const initInterview = async () => {
     try {
-      // Get application details
-      const appRes = await API.get(`/candidates/applications`);
-      const application = appRes.data.data.find(
-        (app) => app._id === applicationId
-      );
+      // 1. Fetch application to get resumeUrl, job title, hrId, candidateId
+      setLoadingMessage("Fetching application details...");
+      const appRes = await API.get("/candidates/applications");
+      const application = appRes.data.data.find((a) => a._id === applicationId);
+      if (!application) throw new Error("Application not found");
 
-      if (!application || !application.job) {
-        throw new Error("Application or job not found");
+      const role = application.job?.title || "Software Engineer";
+      const candidateId = application.candidate;
+      const hrId = application.hr;
+      const resumeUrl = application.resumeUrl;
+
+      setJobRole(role);
+      setAppMeta({ candidateId, hrId });
+
+      // 2. Start an interview session on backend to get interviewId
+      setLoadingMessage("Starting interview session...");
+      const startRes = await API.post("/interviews/start", { candidateId, jobId });
+      const iId = startRes.data.data.interviewId;
+      setInterviewId(iId);
+
+      // 3. Extract resume context from Cloudinary URL
+      setLoadingMessage("Reading your resume...");
+      let rContext = "";
+      if (resumeUrl) {
+        try {
+          const extractRes = await API.post("/interviews/extract-resume-url", { resumeUrl });
+          rContext = extractRes.data.data.resume_context || "";
+        } catch (extractErr) {
+          console.warn("Resume extraction failed, proceeding without context:", extractErr.message);
+          rContext = `Candidate applying for ${role} position.`;
+        }
+      } else {
+        rContext = `Candidate applying for ${role} position.`;
       }
+      setResumeContext(rContext);
+      resumeContextRef.current = rContext;
 
-      const job = application.job;
-
-      // Check if agent is healthy
-      const healthRes = await API.get("/interviews/agent-health");
-      if (!healthRes.data.data.agentStatus === "healthy") {
-        throw new Error("AI Agent is not available");
-      }
-
-      // Note: In a real implementation, you would:
-      // 1. Get resume context from application
-      // 2. Generate questions via backend: POST /api/interviews/generate-questions
-      // 3. Start the interview session
-      
-      // For now, set a simple question flow
-      setSessionId(`session-${Date.now()}`);
-      setInterviewStatus("countdown");
-      startCountdown(3, () => {
-        // Start with first question after countdown
-        const demoQuestions = [
-          "Tell me about yourself and your background.",
-          "What interests you about this position?",
-          "Describe a challenging project you worked on.",
-          "What are your greatest strengths?",
-          "Where do you see yourself in 5 years?",
-        ];
-        setQuestions(demoQuestions);
-        setTotalQuestions(demoQuestions.length);
-        askNextQuestion(demoQuestions, 0);
+      // 4. Generate AI questions
+      setLoadingMessage("AI is generating questions tailored to your resume...");
+      const qRes = await API.post("/interviews/generate-questions", {
+        resumeContext: rContext,
+        role,
       });
-    } catch (error) {
-      console.error("Error fetching interview data:", error);
-      alert("Failed to start interview. Please try again.");
+      const generatedQuestions = qRes.data.data.questions || [];
+      if (generatedQuestions.length === 0) throw new Error("No questions generated");
+
+      setQuestions(generatedQuestions);
+      questionsRef.current = generatedQuestions;
+
+      // 5. Start countdown → begin interview
+      setStatus(STATUS.COUNTDOWN);
+      startCountdown(3, () => {
+        startCamera();
+        beginQuestion(generatedQuestions, 0, iId, rContext, role, candidateId, hrId);
+      });
+    } catch (err) {
+      console.error("Interview init failed:", err);
+      alert(`Failed to start interview: ${err.message}. Please try again.`);
       navigate("/candidates/dashboard");
     }
   };
 
-  // Ask next question in sequence
-  const askNextQuestion = (questionsList, index) => {
-    if (index >= questionsList.length) {
-      // All questions completed
-      completeInterview();
-      return;
-    }
-
-    const question = questionsList[index];
-    setCurrentQuestion(question);
-    setQuestionIndex(index);
-    setInterviewStatus("in-progress");
-    setCurrentTranscript("");
-
-    setTimeout(() => {
-      speakQuestion(question);
-      setTimeout(() => {
-        startListening();
-      }, 1000);
-    }, 300);
-  };
-
-  // Start countdown
+  // ── Countdown ───────────────────────────────────────────────────────────────
   const startCountdown = (seconds, onComplete) => {
+    setCountdown(seconds);
     let count = seconds;
-    setCountdown(count);
-
-    // Test speech synthesis during countdown to ensure it works
-    // This helps bypass browser security restrictions
-    if (count === 5 && "speechSynthesis" in window) {
-      const testUtterance = new SpeechSynthesisUtterance(" ");
-      testUtterance.volume = 0;
-      window.speechSynthesis.speak(testUtterance);
-      window.speechSynthesis.cancel();
-    }
-
-    const countdownInterval = setInterval(() => {
+    const interval = setInterval(() => {
       count--;
       setCountdown(count);
-
       if (count <= 0) {
-        clearInterval(countdownInterval);
+        clearInterval(interval);
         setCountdown(null);
-        startCamera();
-        if (onComplete) {
-          onComplete();
-        }
+        onComplete();
       }
     }, 1000);
   };
 
-  // Complete interview and save results
-  const completeInterview = async () => {
-    setInterviewStatus("completed");
-    stopListening();
-    
-    try {
-      // In a real implementation, you would:
-      // 1. Call POST /api/interviews/final-verdict with all Q&A pairs
-      // 2. Save evaluation to database via POST /api/interviews/:id/evaluate
-      
-      alert("Interview completed! Thank you for your time.");
-      navigate("/candidates/dashboard");
-    } catch (error) {
-      console.error("Error completing interview:", error);
-      alert("Interview completed but failed to save results.");
-      navigate("/candidates/dashboard");
+  // ── Ask a question ──────────────────────────────────────────────────────────
+  const beginQuestion = (qs, index, iId, rCtx, role, candidateId, hrId) => {
+    if (index >= qs.length) {
+      finishInterview(iId, rCtx, role, candidateId, hrId);
+      return;
     }
+    const question = qs[index];
+    setCurrentQuestion(question);
+    setQuestionIndex(index);
+    questionIndexRef.current = index;
+    setCurrentTranscript("");
+    setStatus(STATUS.IN_PROGRESS);
+    statusRef.current = STATUS.IN_PROGRESS;
+
+    // Speak the question, then start listening
+    speakText(question, () => {
+      startListening();
+    });
   };
 
-  // Start camera
-  const startCamera = async () => {
+  // ── Submit answer (triggered by button) ────────────────────────────────────
+  const handleSubmitAnswer = async () => {
+    stopListening();
+    const answer = currentTranscript.trim() || "(no answer provided)";
+    const question = questionsRef.current[questionIndexRef.current];
+    const rCtx = resumeContextRef.current;
+
+    setStatus(STATUS.EVALUATING);
+    statusRef.current = STATUS.EVALUATING;
+    setCurrentTranscript("");
+
+    let evaluation = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
+      const evalRes = await API.post("/interviews/evaluate-answer", {
+        question,
+        answer,
+        resumeContext: rCtx,
+      });
+      evaluation = evalRes.data.data;
+    } catch (err) {
+      console.warn("Evaluation failed, continuing:", err.message);
+      evaluation = { score: 5, feedback: "Evaluation unavailable", strengths: [], weak_areas: [], confidence: 0.5 };
+    }
+
+    const newPair = { question, answer, evaluation };
+    const updated = [...qaPairsRef.current, newPair];
+    qaPairsRef.current = updated;
+    setQaPairs(updated);
+
+    // Move to next question
+    const nextIndex = questionIndexRef.current + 1;
+    const { candidateId, hrId } = appMeta || {};
+    beginQuestion(questionsRef.current, nextIndex, interviewId, rCtx, jobRole, candidateId, hrId);
+  };
+
+  // ── Finish interview ────────────────────────────────────────────────────────
+  const finishInterview = async (iId, rCtx, role, candidateId, hrId) => {
+    setStatus(STATUS.EVALUATING);
+    statusRef.current = STATUS.EVALUATING;
+    setLoadingMessage("AI is generating your final evaluation...");
+    stopListening();
+    stopCamera();
+
+    const pairs = qaPairsRef.current;
+
+    try {
+      // 1. Build session_context for the verdict agent
+      const sessionContext = pairs.map((p) => ({
+        question: p.question,
+        answer: p.answer,
+        score: p.evaluation?.score ?? null,
+        feedback: p.evaluation?.feedback ?? null,
+        strengths: p.evaluation?.strengths ?? [],
+        weak_areas: p.evaluation?.weak_areas ?? [],
+      }));
+
+      // 2. Get final verdict from AI
+      const verdictRes = await API.post("/interviews/final-verdict", {
+        sessionContext,
+        role,
+      });
+      const verdict = verdictRes.data.data;
+      setFinalVerdict(verdict);
+
+      // 3. Save evaluation to database
+      const rating = Math.round((verdict.interview_readiness_score ?? 50) / 10);
+      const transcript = pairs.map((p) => ({
+        speaker: "Question",
+        text: p.question,
+        answer: p.answer,
+      }));
+
+      await API.post(`/interviews/${iId}/evaluate`, {
+        candidateId,
+        jobId,
+        hrId,
+        rating,
+        summary: verdict.summary,
+        interpretation: [
+          ...(verdict.strengths || []).map((s) => `✅ ${s}`),
+          ...(verdict.key_gaps || []).map((g) => `⚠️ ${g}`),
+        ].join("\n"),
+        shouldHire: verdict.hire_signal === "Hire",
+        transcript,
       });
 
-      streamRef.current = stream;
-
-      if (candidateVideoRef.current) {
-        candidateVideoRef.current.srcObject = stream;
-      }
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      alert("Could not access camera/microphone. Please check permissions.");
+      setStatus(STATUS.COMPLETED);
+      statusRef.current = STATUS.COMPLETED;
+    } catch (err) {
+      console.error("Final verdict error:", err);
+      // Still show completed so user isn't stuck
+      setStatus(STATUS.COMPLETED);
+      statusRef.current = STATUS.COMPLETED;
     }
   };
 
-  // Stop camera
+  // ── Camera ──────────────────────────────────────────────────────────────────
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = stream;
+      if (candidateVideoRef.current) candidateVideoRef.current.srcObject = stream;
+    } catch (err) {
+      console.warn("Camera access denied:", err.message);
+    }
+  };
+
   const stopCamera = () => {
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
   };
 
-  // Speak question using Web Speech API
-  const speakQuestion = (text) => {
+  // ── Text-to-Speech ──────────────────────────────────────────────────────────
+  const speakText = (text, onEnd) => {
     if (!("speechSynthesis" in window)) {
-      console.warn("Speech synthesis not supported in this browser");
-      alert(`Question: ${text}`); // Fallback: show question in alert
+      onEnd?.();
       return;
     }
-
-    // Cancel any ongoing speech
     window.speechSynthesis.cancel();
     setIsSpeaking(true);
-
-    // Create new utterance
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
     utterance.pitch = 1;
-    utterance.volume = 1;
     utterance.lang = "en-US";
-
-    // Add event listeners for debugging
-    utterance.onstart = () => {
-      console.log("✅ Started speaking:", text);
-      setIsSpeaking(true);
-    };
-
-    utterance.onend = () => {
-      console.log("✅ Finished speaking");
-      setIsSpeaking(false);
-    };
-
-    utterance.onerror = (event) => {
-      console.error("❌ Speech synthesis error:", event.error);
-      setIsSpeaking(false);
-      // Fallback: show question in console and alert
-      console.log("Question (fallback):", text);
-      alert(`Question: ${text}`);
-    };
-
-    // Try to speak immediately
-    try {
-      window.speechSynthesis.speak(utterance);
-      console.log("🎤 Speaking question:", text);
-    } catch (error) {
-      console.error("❌ Error speaking:", error);
-      setIsSpeaking(false);
-      // Fallback
-      alert(`Question: ${text}`);
-    }
+    utterance.onend = () => { setIsSpeaking(false); onEnd?.(); };
+    utterance.onerror = () => { setIsSpeaking(false); onEnd?.(); };
+    window.speechSynthesis.speak(utterance);
   };
 
-  // Start listening for candidate's answer
+  // ── Speech Recognition ──────────────────────────────────────────────────────
   const startListening = () => {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      console.warn("Speech recognition not supported");
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn("Speech recognition not supported in this browser.");
       return;
     }
+    if (recognitionRef.current) recognitionRef.current.stop();
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
-    
     recognition.continuous = true;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.lang = "en-US";
 
     recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
-      console.log("Transcript:", transcript);
-      setCurrentTranscript(transcript);
-      
-      // Store answer and move to next question after a pause
-      // In a real implementation, you would:
-      // 1. Send to backend for evaluation: POST /api/interviews/evaluate-answer
-      // 2. Get evaluation result before moving to next question
-      
-      setTimeout(() => {
-        answers.push({
-          question: currentQuestion,
-          answer: transcript,
-        });
-        setAnswers([...answers]);
-        
-        // Move to next question
-        const nextIndex = questionIndex + 1;
-        askNextQuestion(questions, nextIndex);
-      }, 2000);
+      let interim = "";
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += t + " ";
+        else interim += t;
+      }
+      setCurrentTranscript((prev) => (finalText ? prev + finalText : prev + interim).trim());
     };
 
-    recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      if (event.error === "no-speech") {
-        // Restart listening if no speech detected
-        setTimeout(() => {
-          if (interviewStatus === "in-progress") {
-            recognition.start();
-          }
-        }, 1000);
+    recognition.onerror = (e) => {
+      if (e.error !== "no-speech" && e.error !== "aborted") {
+        console.warn("Speech recognition error:", e.error);
       }
     };
 
     recognition.onend = () => {
-      // Restart listening if interview is still in progress
-      if (interviewStatus === "in-progress" && !showEndConfirm) {
-        setTimeout(() => {
-          recognition.start();
-        }, 500);
+      // Auto-restart if still in-progress (keeps listening until user clicks submit)
+      if (statusRef.current === STATUS.IN_PROGRESS) {
+        try { recognition.start(); } catch (_) {}
       }
     };
 
@@ -306,72 +350,136 @@ export default function InterviewScreen() {
     setIsRecording(true);
   };
 
-  // Stop listening
   const stopListening = () => {
     if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
       recognitionRef.current.stop();
       recognitionRef.current = null;
-      setIsRecording(false);
     }
+    setIsRecording(false);
   };
 
-  // Interview timer
+  // ── Interview timer ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (interviewStatus === "in-progress") {
-      const timer = setInterval(() => {
-        setInterviewTime((prev) => prev + 1);
-      }, 1000);
+    if (status !== STATUS.IN_PROGRESS) return;
+    const timer = setInterval(() => setInterviewTime((p) => p + 1), 1000);
+    return () => clearInterval(timer);
+  }, [status]);
 
-      return () => clearInterval(timer);
-    }
-  }, [interviewStatus]);
+  const formatTime = (s) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  };
-
+  // ── Video/Audio toggles ─────────────────────────────────────────────────────
   const toggleVideo = () => {
-    setIsVideoOn(!isVideoOn);
-    if (streamRef.current) {
-      streamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !isVideoOn;
-      });
-    }
+    setIsVideoOn((v) => {
+      streamRef.current?.getVideoTracks().forEach((t) => (t.enabled = !v));
+      return !v;
+    });
   };
 
   const toggleAudio = () => {
-    setIsAudioOn(!isAudioOn);
-    if (streamRef.current) {
-      streamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !isAudioOn;
-      });
-    }
-  };
-
-  const handleEndInterview = () => {
-    setShowEndConfirm(true);
+    setIsAudioOn((a) => {
+      streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !a));
+      return !a;
+    });
   };
 
   const confirmEndInterview = () => {
     stopListening();
     stopCamera();
+    window.speechSynthesis?.cancel();
     navigate("/candidates/dashboard");
   };
 
-  const cancelEndInterview = () => {
-    setShowEndConfirm(false);
-  };
+  // ── RENDER ──────────────────────────────────────────────────────────────────
 
+  // Loading screen
+  if (status === STATUS.LOADING) {
+    return (
+      <div className="interview-screen" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "1.5rem" }}>
+        <div className="ai-avatar" style={{ fontSize: "3rem" }}>
+          <i className="fas fa-robot"></i>
+        </div>
+        <div className="loading-spinner" style={{ color: "#667eea", fontWeight: 600, fontSize: "1.1rem" }}>
+          {loadingMessage}
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {[0, 1, 2].map((i) => (
+            <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: "#667eea", animation: `bounce 1s infinite ${i * 0.2}s` }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Completed screen
+  if (status === STATUS.COMPLETED) {
+    const score = finalVerdict?.interview_readiness_score ?? "—";
+    const signal = finalVerdict?.hire_signal ?? "Pending";
+    const signalColor = signal === "Hire" ? "#10b981" : signal === "Borderline" ? "#f59e0b" : "#ef4444";
+
+    return (
+      <div className="interview-screen" style={{ display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "1.5rem", padding: "2rem", overflowY: "auto" }}>
+        <div style={{ background: "#1e1e2e", borderRadius: 16, padding: "2.5rem", maxWidth: 600, width: "100%", textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+          <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🎉</div>
+          <h2 style={{ color: "#fff", marginBottom: "0.5rem" }}>Interview Complete!</h2>
+          <p style={{ color: "#a0a0b0", marginBottom: "1.5rem" }}>Your responses have been evaluated by our AI interviewer.</p>
+
+          <div style={{ display: "flex", justifyContent: "center", gap: "2rem", marginBottom: "2rem" }}>
+            <div style={{ background: "#2a2a3e", borderRadius: 12, padding: "1.2rem 2rem" }}>
+              <div style={{ color: "#a0a0b0", fontSize: "0.85rem" }}>Score</div>
+              <div style={{ color: "#667eea", fontSize: "2.5rem", fontWeight: 700 }}>{score}<span style={{ fontSize: "1rem", color: "#a0a0b0" }}>/100</span></div>
+            </div>
+            <div style={{ background: "#2a2a3e", borderRadius: 12, padding: "1.2rem 2rem" }}>
+              <div style={{ color: "#a0a0b0", fontSize: "0.85rem" }}>Verdict</div>
+              <div style={{ color: signalColor, fontSize: "1.5rem", fontWeight: 700 }}>{signal}</div>
+            </div>
+          </div>
+
+          {finalVerdict?.summary && (
+            <div style={{ background: "#2a2a3e", borderRadius: 12, padding: "1rem 1.5rem", marginBottom: "1.5rem", textAlign: "left" }}>
+              <div style={{ color: "#a0a0b0", fontSize: "0.85rem", marginBottom: "0.4rem" }}>Summary</div>
+              <p style={{ color: "#e0e0f0", margin: 0, lineHeight: 1.6 }}>{finalVerdict.summary}</p>
+            </div>
+          )}
+
+          {finalVerdict?.strengths?.length > 0 && (
+            <div style={{ background: "#1a2e1a", borderRadius: 12, padding: "1rem 1.5rem", marginBottom: "1rem", textAlign: "left" }}>
+              <div style={{ color: "#10b981", fontSize: "0.85rem", marginBottom: "0.4rem" }}>✅ Strengths</div>
+              <ul style={{ color: "#c0e0c0", margin: 0, paddingLeft: "1.2rem" }}>
+                {finalVerdict.strengths.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {finalVerdict?.key_gaps?.length > 0 && (
+            <div style={{ background: "#2e1a1a", borderRadius: 12, padding: "1rem 1.5rem", marginBottom: "1.5rem", textAlign: "left" }}>
+              <div style={{ color: "#f59e0b", fontSize: "0.85rem", marginBottom: "0.4rem" }}>⚠️ Areas to Improve</div>
+              <ul style={{ color: "#e0c0a0", margin: 0, paddingLeft: "1.2rem" }}>
+                {finalVerdict.key_gaps.map((g, i) => <li key={i}>{g}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <button
+            onClick={() => navigate("/candidates/dashboard")}
+            style={{ background: "linear-gradient(135deg,#667eea,#764ba2)", color: "#fff", border: "none", borderRadius: 10, padding: "0.9rem 2.5rem", fontSize: "1rem", fontWeight: 600, cursor: "pointer", width: "100%" }}
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Main interview screen
   return (
     <div className="interview-screen">
+      {/* Header */}
       <div className="interview-header">
         <div className="interview-info">
-          <h2>
-            <i className="fas fa-video"></i> AI Interview Session
-          </h2>
-          {interviewStatus === "in-progress" && (
+          <h2><i className="fas fa-video"></i> AI Interview — {jobRole}</h2>
+          {status === STATUS.IN_PROGRESS && (
             <div className="interview-timer">
               <i className="fas fa-clock"></i> {formatTime(interviewTime)}
             </div>
@@ -388,58 +496,67 @@ export default function InterviewScreen() {
               <i className="fas fa-circle"></i> Recording
             </span>
           )}
+          {isSpeaking && (
+            <span className="recording-indicator" style={{ background: "rgba(102,126,234,0.2)", color: "#667eea" }}>
+              <i className="fas fa-volume-up"></i> AI Speaking
+            </span>
+          )}
           {currentQuestion && (
             <span className="question-indicator">
-              Question {questionIndex + 1} of {totalQuestions}
+              Question {questionIndex + 1} of {questions.length}
             </span>
           )}
         </div>
       </div>
 
+      {/* Evaluating overlay */}
+      {status === STATUS.EVALUATING && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 100, gap: "1rem" }}>
+          <div style={{ fontSize: "2rem" }}><i className="fas fa-robot" style={{ color: "#667eea" }}></i></div>
+          <p style={{ color: "#fff", fontSize: "1.1rem", fontWeight: 600 }}>{loadingMessage || "AI is evaluating your answer..."}</p>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: "#667eea", animation: `bounce 1s infinite ${i * 0.2}s` }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Countdown overlay */}
+      {status === STATUS.COUNTDOWN && countdown !== null && (
+        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <p style={{ color: "#a0a0b0", marginBottom: "1rem", fontSize: "1.1rem" }}>Interview starting in</p>
+          <div style={{ color: "#667eea", fontSize: "8rem", fontWeight: 700, lineHeight: 1 }}>{countdown}</div>
+          <p style={{ color: "#a0a0b0", marginTop: "1rem" }}>Get ready...</p>
+        </div>
+      )}
+
+      {/* Video grid */}
       <div className="video-container">
         <div className="video-grid">
-          {/* AI Video */}
+          {/* AI panel */}
           <div className="video-panel ai-video-panel">
             <div className="video-wrapper">
-              <video
-                ref={aiVideoRef}
-                className="video-element"
-                autoPlay
-                playsInline
-                muted
-              >
-                {/* AI video stream placeholder */}
-              </video>
               <div className="video-placeholder">
                 <div className="ai-avatar">
-                  <i className="fas fa-robot"></i>
+                  <i className={`fas ${isSpeaking ? "fa-comment-dots" : "fa-robot"}`}></i>
                 </div>
                 <p>AI Interviewer</p>
-                {currentQuestion && (
+                {currentQuestion && status === STATUS.IN_PROGRESS && (
                   <div className="current-question">
                     <p className="question-text">{currentQuestion}</p>
                   </div>
                 )}
               </div>
             </div>
-            <div className="video-label">
-              <i className="fas fa-robot"></i> AI Interviewer
-            </div>
+            <div className="video-label"><i className="fas fa-robot"></i> AI Interviewer</div>
           </div>
 
-          {/* Candidate Video */}
+          {/* Candidate panel */}
           <div className="video-panel candidate-video-panel">
             <div className="video-wrapper">
               {isVideoOn ? (
-                <video
-                  ref={candidateVideoRef}
-                  className="video-element"
-                  autoPlay
-                  playsInline
-                  muted={!isAudioOn}
-                >
-                  {/* Candidate's camera stream */}
-                </video>
+                <video ref={candidateVideoRef} className="video-element" autoPlay playsInline muted />
               ) : (
                 <div className="video-off-overlay">
                   <i className="fas fa-video-slash"></i>
@@ -447,61 +564,65 @@ export default function InterviewScreen() {
                 </div>
               )}
             </div>
-            <div className="video-label">
-              <i className="fas fa-user"></i> You
-            </div>
+            <div className="video-label"><i className="fas fa-user"></i> You</div>
           </div>
         </div>
       </div>
 
+      {/* Live transcript */}
+      {status === STATUS.IN_PROGRESS && (
+        <div style={{ background: "#1e1e2e", borderTop: "1px solid #2a2a4e", padding: "0.8rem 1.5rem", minHeight: 64, display: "flex", alignItems: "center", gap: "1rem" }}>
+          <i className="fas fa-microphone" style={{ color: isRecording ? "#ef4444" : "#a0a0b0" }}></i>
+          <p style={{ margin: 0, color: currentTranscript ? "#e0e0f0" : "#606080", fontStyle: currentTranscript ? "normal" : "italic", flex: 1, fontSize: "0.95rem" }}>
+            {currentTranscript || "Start speaking your answer..."}
+          </p>
+        </div>
+      )}
+
+      {/* Controls */}
       <div className="interview-controls">
         <div className="control-buttons">
-          <button
-            className={`control-btn ${isAudioOn ? "active" : "muted"}`}
-            onClick={toggleAudio}
-            title={isAudioOn ? "Mute" : "Unmute"}
-          >
+          <button className={`control-btn ${isAudioOn ? "active" : "muted"}`} onClick={toggleAudio} title={isAudioOn ? "Mute" : "Unmute"}>
             <i className={`fas fa-microphone${isAudioOn ? "" : "-slash"}`}></i>
           </button>
-
-          <button
-            className={`control-btn ${isVideoOn ? "active" : "muted"}`}
-            onClick={toggleVideo}
-            title={isVideoOn ? "Turn off camera" : "Turn on camera"}
-          >
+          <button className={`control-btn ${isVideoOn ? "active" : "muted"}`} onClick={toggleVideo} title={isVideoOn ? "Turn off camera" : "Turn on camera"}>
             <i className={`fas fa-video${isVideoOn ? "" : "-slash"}`}></i>
           </button>
-
-          <button
-            className={`control-btn ${isRecording ? "recording" : ""}`}
-            title={isRecording ? "Recording" : "Not recording"}
-            disabled
-          >
-            <i className="fas fa-circle"></i>
-          </button>
+          {isRecording && (
+            <span className="recording-indicator" style={{ alignSelf: "center" }}>
+              <i className="fas fa-circle"></i> Listening
+            </span>
+          )}
         </div>
 
-        <button className="end-interview-btn" onClick={handleEndInterview}>
-          <i className="fas fa-phone-slash"></i> End Interview
-        </button>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+          {/* Submit Answer button — only shown while in-progress */}
+          {status === STATUS.IN_PROGRESS && (
+            <button
+              className="end-interview-btn"
+              style={{ background: "linear-gradient(135deg,#10b981,#059669)", fontSize: "0.95rem" }}
+              onClick={handleSubmitAnswer}
+              disabled={isSpeaking}
+            >
+              <i className="fas fa-check"></i> Submit Answer
+            </button>
+          )}
+          <button className="end-interview-btn" onClick={() => setShowEndConfirm(true)}>
+            <i className="fas fa-phone-slash"></i> End Interview
+          </button>
+        </div>
       </div>
 
-      {/* End Interview Confirmation Modal */}
+      {/* End confirm modal */}
       {showEndConfirm && (
         <div className="end-interview-modal">
           <div className="modal-content">
-            <div className="modal-icon">
-              <i className="fas fa-exclamation-triangle"></i>
-            </div>
+            <div className="modal-icon"><i className="fas fa-exclamation-triangle"></i></div>
             <h3>End Interview?</h3>
-            <p>Are you sure you want to end this interview session? This action cannot be undone.</p>
+            <p>Are you sure you want to end this interview? Your progress will be lost.</p>
             <div className="modal-actions">
-              <button className="cancel-btn" onClick={cancelEndInterview}>
-                Cancel
-              </button>
-              <button className="confirm-btn" onClick={confirmEndInterview}>
-                End Interview
-              </button>
+              <button className="cancel-btn" onClick={() => setShowEndConfirm(false)}>Cancel</button>
+              <button className="confirm-btn" onClick={confirmEndInterview}>End Interview</button>
             </div>
           </div>
         </div>

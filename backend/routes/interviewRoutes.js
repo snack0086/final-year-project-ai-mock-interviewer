@@ -21,9 +21,14 @@ const upload = multer({
 
 // AI Agent Integration Routes
 // @route   POST /api/interviews/extract-resume
-// @desc    Extract resume context using AI agent
+// @desc    Extract resume context using AI agent (file upload)
 // @access  Private
 router.post("/extract-resume", upload.single("resume"), interviewController.extractResume);
+
+// @route   POST /api/interviews/extract-resume-url
+// @desc    Extract resume context from a remote URL (Cloudinary etc.)
+// @access  Private
+router.post("/extract-resume-url", interviewController.extractResumeFromUrl);
 
 // @route   POST /api/interviews/generate-questions
 // @desc    Generate interview questions using AI agent

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from config.interview_rules import MAX_QUESTIONS, MIN_PASS_SCORE, MIN_CONFIDENCE
-from models.evaluation import EvaluationResult
+from app.config.interview_rules import MAX_QUESTIONS, MIN_PASS_SCORE, MIN_CONFIDENCE
+from app.models.evaluation import EvaluationResult
 
 class InterviewDecision(BaseModel):
     action: str

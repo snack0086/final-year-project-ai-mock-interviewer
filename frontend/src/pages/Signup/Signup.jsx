@@ -49,6 +49,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
+import API from "../../config";
 import "./Signup.css";
 
 
@@ -65,19 +66,22 @@ export default function Signup() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    const res = await fetch("http://localhost:5000/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData),
-    });
-
-    const data = await res.json();
-    console.log(data);
-    if (data.success) {
-      navigate("/login");
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await API.post("/auth/register", formData);
+      if (res.data.success) {
+        navigate("/login");
+      }
+    } catch (err) {
+      setError(err.response?.data?.message || "Registration failed. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,6 +91,12 @@ export default function Signup() {
         <h2>
           <i className="fas fa-robot"></i> Create Account
         </h2>
+
+        {error && (
+          <div className="alert" style={{ color: "red", marginBottom: "1rem" }}>
+            <i className="fas fa-exclamation-circle"></i> {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit}>
           <input
@@ -119,8 +129,8 @@ export default function Signup() {
             <option value="hr">HR</option>
           </select>
 
-          <button type="submit">
-            <i className="fas fa-user-plus"></i> Sign Up
+          <button type="submit" disabled={loading}>
+            {loading ? "Creating Account..." : <><i className="fas fa-user-plus"></i> Sign Up</>}
           </button>
         </form>
 

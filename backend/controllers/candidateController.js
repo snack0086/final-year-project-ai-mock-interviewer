@@ -156,9 +156,6 @@ exports.getApplications = async (req, res) => {
 
 exports.applyForJob = async (req, res) => {
   try {
-    console.log("--- APPLY REQUEST RECEIVED ---");
-    console.log("Req.body:", req.body); // Should show { jobId: '...' }
-    console.log("Req.file:", req.file);
     const candidateId = req.user.id;
     const { jobId } = req.body;
 

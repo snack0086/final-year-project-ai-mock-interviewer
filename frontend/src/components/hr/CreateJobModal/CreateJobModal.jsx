@@ -6,7 +6,7 @@ export default function CreateJobModal({ onClose, onJobCreated }) {
     title: "",
     company: "",
     location: "",
-    type: "Full-time",
+    type: "full-time",
     salaryRange: "",
     description: "",
     requirements: "", // We'll take this as a comma-separated string
@@ -17,11 +17,16 @@ export default function CreateJobModal({ onClose, onJobCreated }) {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    // Send data back to parent (HRDashboard) to handle the API call
-    onJobCreated(formData);
+    try {
+      await onJobCreated(formData);
+    } catch {
+      // Parent handles the alert; just reset loading so button is usable again
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

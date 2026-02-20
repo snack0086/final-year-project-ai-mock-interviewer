@@ -212,6 +212,37 @@ exports.updateCandidateStatus = async (req, res) => {
   }
 };
 
+// @desc    Delete a job posted by this HR
+// @route   DELETE /api/hr/jobs/:jobId
+// @access  Private (HR)
+exports.deleteJob = async (req, res) => {
+  try {
+    const hrId = req.user.id;
+    const { jobId } = req.params;
+
+    const job = await Job.findById(jobId);
+
+    if (!job) {
+      return res.status(404).json({ success: false, message: "Job not found" });
+    }
+
+    // Only the HR who created the job can delete it
+    if (job.createdBy.toString() !== hrId.toString()) {
+      return res.status(403).json({ success: false, message: "Not authorized to delete this job" });
+    }
+
+    await Job.findByIdAndDelete(jobId);
+
+    // Also remove all applications linked to this job
+    await Application.deleteMany({ job: jobId });
+
+    res.status(200).json({ success: true, message: "Job deleted successfully" });
+  } catch (error) {
+    console.error("Delete Job Error:", error);
+    res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
 // @desc    Post a new job
 // @route   POST /api/hr/jobs
 // @access  Private (HR)

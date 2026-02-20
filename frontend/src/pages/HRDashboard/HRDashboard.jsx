@@ -315,27 +315,22 @@ export default function HRDashboard() {
   };
 
   const handleCreateJob = async (jobData) => {
+    const res = await API.post("/hr/jobs", jobData);
+    const newJob = res.data.job;
+    const formattedJob = { ...newJob, id: newJob._id, candidates: [] };
+    setJobOpenings([formattedJob, ...jobOpenings]);
+    setShowCreateJob(false);
+    alert("Job Posted Successfully!");
+  };
+
+  const handleDeleteJob = async (jobId) => {
     try {
-      const res = await API.post("/hr/jobs", jobData);
-
-      // The backend returns the new job object
-      const newJob = res.data.job;
-
-      // We need to format it slightly to match the "dashboard" structure
-      // (which includes a 'candidates' array)
-      const formattedJob = {
-        ...newJob,
-        id: newJob._id,
-        candidates: [], // Start with empty candidates
-      };
-
-      // Update state immediately so it appears on screen
-      setJobOpenings([formattedJob, ...jobOpenings]);
-      setShowCreateJob(false);
-      alert("Job Posted Successfully!");
+      await API.delete(`/hr/jobs/${jobId}`);
+      setJobOpenings(jobOpenings.filter((j) => (j._id || j.id) !== jobId));
+      alert("Job deleted successfully.");
     } catch (err) {
-      console.error("Failed to post job", err);
-      alert("Failed to post job");
+      console.error("Failed to delete job", err);
+      alert(err.response?.data?.message || "Failed to delete job.");
     }
   };
 
@@ -406,12 +401,11 @@ export default function HRDashboard() {
               {jobOpenings.length > 0 ? (
                 jobOpenings.map((job) => (
                   <JobOpeningWithCandidates
-                    // Backend uses _id, but we mapped it to 'id' in controller
                     key={job.id || job._id}
                     jobOpening={job}
-                    // The controller now populates this array:
                     candidates={job.candidates}
                     onViewCandidate={handleViewCandidate}
+                    onDeleteJob={handleDeleteJob}
                   />
                 ))
               ) : (

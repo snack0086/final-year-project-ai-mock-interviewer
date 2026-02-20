@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
-from models.evaluation import EvaluationResult
+from app.models.evaluation import EvaluationResult
 
 class InterviewNextStepRequest(BaseModel):
     resume_context: str

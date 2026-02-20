@@ -74,11 +74,6 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // DEBUG LOG 1: Check what the backend received
-    console.log("--- LOGIN ATTEMPT ---");
-    console.log("Email received:", email);
-    console.log("Password received:", password);
-
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -88,7 +83,6 @@ exports.login = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      onsole.log("❌ User NOT found in DB");
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
