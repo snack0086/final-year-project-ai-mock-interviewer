@@ -4,6 +4,7 @@ const morgan = require("morgan");
 const helmet = require("helmet");
 const mongoSanitize = require("express-mongo-sanitize");
 const rateLimit = require("express-rate-limit");
+const path = require("path");
 
 // Import routes
 const authRoutes = require("./routes/authRoutes");
@@ -28,6 +29,10 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, curl, Postman)
       if (!origin) return callback(null, true);
+      // In development: allow ALL localhost ports (any port Vite picks)
+      if (process.env.NODE_ENV !== "production" && /^http:\/\/localhost:\d+$/.test(origin)) {
+        return callback(null, true);
+      }
       if (allowedOrigins.includes(origin)) return callback(null, true);
       callback(new Error(`CORS policy: origin ${origin} not allowed`));
     },
@@ -83,6 +88,9 @@ app.get("/", (req, res) => {
     environment: process.env.NODE_ENV || "development",
   });
 });
+
+// ─── Static Files (local resume uploads) ─────────────────────────────────────
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);

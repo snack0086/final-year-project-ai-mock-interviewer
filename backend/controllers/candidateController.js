@@ -193,8 +193,8 @@ exports.applyForJob = async (req, res) => {
       });
     }
 
-    // Use secure_url if available (HTTPS), otherwise use path
-    const resumeUrl = req.file.secure_url || req.file.path || req.file.url;
+    // Build a local URL from the saved filename (disk storage)
+    const resumeUrl = `/uploads/resumes/${req.file.filename}`;
 
     // 1. Create the application
     let application = await Application.create({

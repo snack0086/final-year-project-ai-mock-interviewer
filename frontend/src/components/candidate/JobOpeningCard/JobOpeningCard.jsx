@@ -2,7 +2,7 @@ import "./JobOpeningCard.css";
 
 export default function JobOpeningCard({ job, onApply }) {
   const {
-    id,
+    _id,
     title,
     company,
     location,
@@ -55,7 +55,7 @@ export default function JobOpeningCard({ job, onApply }) {
           <span className="posted-date">
             <i className="fas fa-calendar"></i> Posted {postedDate}
           </span>
-          <button className="apply-btn" onClick={() => onApply(id)}>
+          <button className="apply-btn" onClick={() => onApply(_id)}>
             <i className="fas fa-paper-plane"></i> Apply Now
           </button>
         </div>
