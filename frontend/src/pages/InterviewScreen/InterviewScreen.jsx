@@ -298,12 +298,33 @@ export default function InterviewScreen() {
     }
     window.speechSynthesis.cancel();
     setIsSpeaking(true);
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 0.9;
     utterance.pitch = 1;
     utterance.lang = "en-US";
-    utterance.onend = () => { setIsSpeaking(false); onEnd?.(); };
-    utterance.onerror = () => { setIsSpeaking(false); onEnd?.(); };
+
+    let callbackFired = false;
+    const fireCallback = () => {
+      if (callbackFired) return;
+      callbackFired = true;
+      setIsSpeaking(false);
+      onEnd?.();
+    };
+
+    utterance.onend = fireCallback;
+    utterance.onerror = fireCallback;
+
+    // Chrome bug: speechSynthesis sometimes stalls and never fires onend.
+    // Fallback: estimate duration from word count (avg 130 wpm) + 1 s buffer.
+    const wordCount = text.split(/\s+/).length;
+    const estimatedMs = Math.max(3000, (wordCount / 130) * 60000 + 1000);
+    const fallbackTimer = setTimeout(fireCallback, estimatedMs);
+
+    // Clear the fallback if the utterance ends naturally
+    utterance.onend = () => { clearTimeout(fallbackTimer); fireCallback(); };
+    utterance.onerror = () => { clearTimeout(fallbackTimer); fireCallback(); };
+
     window.speechSynthesis.speak(utterance);
   };
 
@@ -311,41 +332,86 @@ export default function InterviewScreen() {
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      console.warn("Speech recognition not supported in this browser.");
+      console.warn("Speech recognition not supported. Please use Google Chrome.");
+      alert("Speech recognition is not supported in this browser. Please use Google Chrome for the interview.");
       return;
     }
-    if (recognitionRef.current) recognitionRef.current.stop();
+
+    // Stop any existing session before creating a new one
+    if (recognitionRef.current) {
+      try { recognitionRef.current.onend = null; recognitionRef.current.stop(); } catch (_) {}
+      recognitionRef.current = null;
+    }
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
+
+    // Track confirmed (final) text separately so interim results
+    // never corrupt the accumulated transcript.
+    let confirmedText = "";
+
+    recognition.onstart = () => {
+      setIsRecording(true);
+      console.log("🎤 Speech recognition started");
+    };
 
     recognition.onresult = (event) => {
-      let interim = "";
-      let finalText = "";
+      let interimText = "";
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += t + " ";
-        else interim += t;
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          // Permanently add to confirmed text
+          confirmedText += transcript + " ";
+        } else {
+          // Collect interim (still being spoken)
+          interimText += transcript;
+        }
       }
-      setCurrentTranscript((prev) => (finalText ? prev + finalText : prev + interim).trim());
+
+      // Display confirmed + whatever is still being spoken right now
+      setCurrentTranscript((confirmedText + interimText).trim());
     };
 
     recognition.onerror = (e) => {
-      if (e.error !== "no-speech" && e.error !== "aborted") {
-        console.warn("Speech recognition error:", e.error);
+      console.warn("Speech recognition error:", e.error);
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        console.error("Microphone permission denied:", e.error);
+        alert("Microphone access was denied. Please click the 🔒 icon in your browser address bar, allow the microphone, and refresh the page.");
+      }
+      // For network/audio-capture errors, try to restart after a short delay
+      if (e.error === "network" || e.error === "audio-capture") {
+        setTimeout(() => {
+          if (statusRef.current === STATUS.IN_PROGRESS) {
+            try { recognition.start(); } catch (_) {}
+          }
+        }, 1000);
       }
     };
 
     recognition.onend = () => {
       // Auto-restart if still in-progress (keeps listening until user clicks submit)
+      // The confirmedText closure persists across restarts so transcript is not lost
       if (statusRef.current === STATUS.IN_PROGRESS) {
         try { recognition.start(); } catch (_) {}
+      } else {
+        setIsRecording(false);
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (err) {
+      console.error("Failed to start speech recognition:", err);
+      // Retry once after 500ms in case of a timing conflict
+      setTimeout(() => {
+        try { recognition.start(); } catch (_) {}
+      }, 500);
+    }
+
     recognitionRef.current = recognition;
     setIsRecording(true);
   };
@@ -372,15 +438,27 @@ export default function InterviewScreen() {
   // ── Video/Audio toggles ─────────────────────────────────────────────────────
   const toggleVideo = () => {
     setIsVideoOn((v) => {
-      streamRef.current?.getVideoTracks().forEach((t) => (t.enabled = !v));
-      return !v;
+      const newState = !v;
+      if (streamRef.current) {
+        // Enable/disable the existing video track
+        streamRef.current.getVideoTracks().forEach((t) => (t.enabled = newState));
+        // Re-assign srcObject in case the video element was remounted
+        if (newState && candidateVideoRef.current) {
+          candidateVideoRef.current.srcObject = streamRef.current;
+        }
+      }
+      return newState;
     });
   };
 
   const toggleAudio = () => {
     setIsAudioOn((a) => {
-      streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !a));
-      return !a;
+      const newState = !a;
+      // Mute/unmute the camera stream's audio track (for the video element)
+      // but do NOT touch the SpeechRecognition — it has its own mic access
+      // and is unaffected by the MediaStream track state.
+      streamRef.current?.getAudioTracks().forEach((t) => (t.enabled = newState));
+      return newState;
     });
   };
 
@@ -555,9 +633,18 @@ export default function InterviewScreen() {
           {/* Candidate panel */}
           <div className="video-panel candidate-video-panel">
             <div className="video-wrapper">
-              {isVideoOn ? (
-                <video ref={candidateVideoRef} className="video-element" autoPlay playsInline muted />
-              ) : (
+              {/* Always keep <video> in DOM so the ref is never lost.
+                  Hide it with CSS when camera is off so re-enabling
+                  works without needing to re-assign srcObject. */}
+              <video
+                ref={candidateVideoRef}
+                className="video-element"
+                autoPlay
+                playsInline
+                muted
+                style={{ display: isVideoOn ? "block" : "none" }}
+              />
+              {!isVideoOn && (
                 <div className="video-off-overlay">
                   <i className="fas fa-video-slash"></i>
                   <p>Camera Off</p>

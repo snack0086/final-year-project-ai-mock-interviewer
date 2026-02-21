@@ -3,6 +3,7 @@ const Application = require("../models/Application");
 const agentService = require("../services/agentService");
 const axios = require("axios");
 const path = require("path");
+const fs = require("fs");
 
 // @desc    Start a new interview session
 // @route   POST /api/interviews/start
@@ -177,7 +178,7 @@ exports.getCandidateInterviews = async (req, res) => {
   }
 };
 
-// @desc    Extract resume context from a Cloudinary/remote URL
+// @desc    Extract resume context from a Cloudinary/remote URL or local path
 // @route   POST /api/interviews/extract-resume-url
 exports.extractResumeFromUrl = async (req, res) => {
   try {
@@ -190,23 +191,38 @@ exports.extractResumeFromUrl = async (req, res) => {
       });
     }
 
-    // Download the file buffer from the remote URL
-    const fileResponse = await axios.get(resumeUrl, {
-      responseType: "arraybuffer",
-      timeout: 20000,
-    });
-
-    const buffer = Buffer.from(fileResponse.data);
-
-    // Derive a filename from the URL (default to resume.pdf)
+    let buffer;
     let filename = "resume.pdf";
-    try {
-      const urlPath = new URL(resumeUrl).pathname;
-      const base = path.basename(urlPath);
-      if (base && (base.endsWith(".pdf") || base.endsWith(".docx"))) {
-        filename = base;
+
+    // Detect local path (starts with /uploads/) vs remote URL
+    const isLocalPath = resumeUrl.startsWith("/uploads/");
+
+    if (isLocalPath) {
+      // Read directly from disk — no HTTP needed
+      const localFilePath = path.join(__dirname, "..", resumeUrl);
+      if (!fs.existsSync(localFilePath)) {
+        return res.status(404).json({
+          success: false,
+          message: "Resume file not found on server",
+        });
       }
-    } catch (_) {}
+      buffer = fs.readFileSync(localFilePath);
+      filename = path.basename(localFilePath);
+    } else {
+      // Download from remote URL (Cloudinary, S3, etc.)
+      const fileResponse = await axios.get(resumeUrl, {
+        responseType: "arraybuffer",
+        timeout: 20000,
+      });
+      buffer = Buffer.from(fileResponse.data);
+      try {
+        const urlPath = new URL(resumeUrl).pathname;
+        const base = path.basename(urlPath);
+        if (base && (base.endsWith(".pdf") || base.endsWith(".docx"))) {
+          filename = base;
+        }
+      } catch (_) {}
+    }
 
     const result = await agentService.extractResumeContext(buffer, filename);
 

@@ -2,6 +2,7 @@ const User = require("../models/User");
 const Job = require("../models/Job");
 const Application = require("../models/Application");
 const InterviewEvaluation = require("../models/InterviewEvaluation");
+const { uploadToCloudinary } = require("../config/cloudinary");
 
 // @desc    Get candidate dashboard data
 // @route   GET /api/candidates/dashboard
@@ -193,8 +194,9 @@ exports.applyForJob = async (req, res) => {
       });
     }
 
-    // Build a local URL from the saved filename (disk storage)
-    const resumeUrl = `/uploads/resumes/${req.file.filename}`;
+    // Upload the resume buffer to Cloudinary and get the public HTTPS URL
+    const cloudinaryResult = await uploadToCloudinary(req.file.buffer, req.file.originalname);
+    const resumeUrl = cloudinaryResult.secure_url;
 
     // 1. Create the application
     let application = await Application.create({

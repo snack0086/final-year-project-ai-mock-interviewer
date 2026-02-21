@@ -1,23 +1,19 @@
+const cloudinary = require("cloudinary").v2;
 const multer = require("multer");
+const dotenv = require("dotenv");
 const path = require("path");
-const fs = require("fs");
 
-// Ensure uploads directory exists
-const uploadDir = path.join(__dirname, "../uploads/resumes");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+dotenv.config();
 
-// Use disk storage — no Cloudinary API key required
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `resume-${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  },
+// Configure Cloudinary with credentials from .env
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// Use memory storage so we can stream the buffer to Cloudinary
+const storage = multer.memoryStorage();
 
 // Configure multer with file filter
 const upload = multer({
@@ -41,12 +37,22 @@ const upload = multer({
   },
 });
 
-// Stub kept for compatibility — returns a local URL instead of Cloudinary URL
+// Upload a buffer to Cloudinary and return the result (with secure_url)
 const uploadToCloudinary = (buffer, filename) => {
-  return Promise.resolve({
-    secure_url: `/uploads/resumes/${filename}`,
-    url: `/uploads/resumes/${filename}`,
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: "ai-interviewer-resumes",
+        resource_type: "auto",
+        public_id: `resume-${Date.now()}-${path.parse(filename).name}`,
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    uploadStream.end(buffer);
   });
 };
 
-module.exports = { upload, uploadToCloudinary };
+module.exports = { upload, cloudinary, uploadToCloudinary };
